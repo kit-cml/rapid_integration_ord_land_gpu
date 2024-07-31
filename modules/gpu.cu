@@ -194,24 +194,25 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
 
         solveAnalytical(d_CONSTANTS, d_STATES, d_ALGEBRAIC, d_RATES, dt[sample_id], sample_id);
 
-        if (dt >= min_dt){
+        if (dt[sample_id] >= min_dt){
           dt_mech = min_dt;
         } else {
           dt_mech = dt[sample_id];
         }
-        tcurr_mech = tcurr[sample_id]
+        tcurr_mech = tcurr[sample_id];
         if (dt[sample_id] > 0 && dt_mech > 0){
-          mech_jump = std::ceil(dt/dt_mech);
+          mech_jump = std::ceil(dt[sample_id]/dt_mech);
           for (int i_jump = 0; i_jump < mech_jump; i_jump++){
             if (tcurr_mech + dt_mech >= tcurr[sample_id] + dt[sample_id]){
               dt_mech = tcurr[sample_id] + dt[sample_id] - tcurr_mech; 
             }
             land_solveEuler(dt[sample_id], tcurr[sample_id], d_STATES[cai + (sample_id * ORd_num_of_states)] * 1000., d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, sample_id);
             // For next i_jump
-            t_mech = t_mech + dt_mech;
+            tcurr_mech = tcurr_mech + dt_mech;
             // p_mech->CONSTANTS[Cai] = p_mech->CONSTANTS[Cai] + cai_rates*dt_mech;
             land_computeRates(tcurr[sample_id], d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, d_mec_ALGEBRAIC, y, sample_id);
           }
+        }
 
 
         // dt_set = 0.005;
