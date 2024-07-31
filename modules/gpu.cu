@@ -126,7 +126,19 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
     tcurr[sample_id] = 0.0;
     dt[sample_id] = p_param->dt;
     double max_time_step = 0.1, time_point = 25.0;
+    const unsigned short pace_max = p_param->pace_max;
     double dt_set;
+    double tmax = pace_max * d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
+
+    double dt_set_mech;
+    double dt_mech;
+    double tcurr_mech;
+    bool forward_euler_only = 0;
+    double next_write_time = tmax - d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
+    int mech_jump;
+    double max_dt = 1.0;
+    double min_dt = 0.0001;
+
     int cipa_datapoint = 0;
     unsigned short pace_count = 0;
     double t_peak_capture = 0.0;
@@ -134,9 +146,9 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
     bool init_states_captured = false;
     bool is_eligible_AP;
     const double bcl = p_param->bcl;
-    const unsigned short pace_max = p_param->pace_max;
+    
     const unsigned short last_drug_check_pace = p_param->find_steepest_start;
-    double tmax = pace_max * bcl;
+    
     double conc = d_conc;
     double type = p_param->celltype;
     double y[7] = {0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0};
@@ -161,8 +173,47 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
         
         // Set time step (adaptive dt)
         //NOTE: Disabled in Margara
-        dt_set = set_time_step(tcurr[sample_id], time_point, max_time_step, d_CONSTANTS, d_RATES, d_STATES, d_ALGEBRAIC,
-                              sample_id);
+        // dt_set = set_time_step(tcurr[sample_id], time_point, max_time_step, d_CONSTANTS, d_RATES, d_STATES, d_ALGEBRAIC, sample_id);
+
+        // Solve ORdstatic
+        if (forward_euler_only == 1){
+            dt[sample_id] = max_dt;
+          } else {
+        dt_set = set_time_step(tcurr[sample_id], time_point, max_time_step, d_CONSTANTS, d_RATES, d_STATES, d_ALGEBRAIC, sample_id);
+        }
+        
+        if (tcurr[sample_id] + dt[sample_id] >= next_write_time){
+        dt[sample_id] = next_write_time - tcurr[sample_id];
+        }
+
+        // if (forward_euler_only == 1){
+        // p_elec->solveEuler(dt);
+        // } else {
+        // p_elec->solveAnalytical(dt);
+        // }
+
+        solveAnalytical(d_CONSTANTS, d_STATES, d_ALGEBRAIC, d_RATES, dt[sample_id], sample_id);
+
+        if (dt >= min_dt){
+          dt_mech = min_dt;
+        } else {
+          dt_mech = dt[sample_id];
+        }
+        tcurr_mech = tcurr[sample_id]
+        if (dt[sample_id] > 0 && dt_mech > 0){
+          mech_jump = std::ceil(dt/dt_mech);
+          for (int i_jump = 0; i_jump < mech_jump; i_jump++){
+            if (tcurr_mech + dt_mech >= tcurr[sample_id] + dt[sample_id]){
+              dt_mech = tcurr[sample_id] + dt[sample_id] - tcurr_mech; 
+            }
+            land_solveEuler(dt[sample_id], tcurr[sample_id], d_STATES[cai + (sample_id * ORd_num_of_states)] * 1000., d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, sample_id);
+            // For next i_jump
+            t_mech = t_mech + dt_mech;
+            // p_mech->CONSTANTS[Cai] = p_mech->CONSTANTS[Cai] + cai_rates*dt_mech;
+            land_computeRates(tcurr[sample_id], d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, d_mec_ALGEBRAIC, y, sample_id);
+          }
+
+
         // dt_set = 0.005;
         // Check if within the same cycle
         if (floor((tcurr[sample_id] + dt_set) / bcl) == floor(tcurr[sample_id] / bcl)) {
@@ -197,6 +248,8 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
                        pace_count, tcurr[sample_id], pace_steepest, cipa_result[sample_id].dvmdt_repol, conc);
             }
         }
+
+
 
         // Solve ODEs analytically
         solveAnalytical(d_CONSTANTS, d_STATES, d_ALGEBRAIC, d_RATES, dt[sample_id], sample_id);
