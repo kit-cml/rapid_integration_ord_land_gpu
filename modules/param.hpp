@@ -18,6 +18,7 @@ struct param_t {
     double dt;                           ///< Time step
     double dt_write;                     ///< Writing step
     double inet_vm_threshold;            ///< Vm threshold for calculating inet
+    float dtw;
     char hill_file[1024];                ///< File name for Hill coefficient data
     char cache_file[1024];                ///< File name for in-silico cache data
     char cvar_file[1024];                ///< File name for conductance variability data

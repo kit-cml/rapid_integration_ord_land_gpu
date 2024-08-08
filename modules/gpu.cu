@@ -121,6 +121,13 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
     init_result(temp_result[sample_id], d_STATES, sample_id);
     init_result(cipa_result[sample_id], d_STATES, sample_id);
 
+    //writing and loops
+    float dtw = p_param->dtw;
+    double t_max = (double) p_param->pace_max * d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
+    double next_write_time = t_max - d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
+    int imax = int((t_max - next_write_time) / dtw) + 1;// + ((int(t_max) - int(next_write_time)) % int(dtw) == 0 ? 0 : 1);
+    int iprint = 0;
+
     // Simulation variables
     bool is_peak = false;
     tcurr[sample_id] = 0.0;
@@ -164,7 +171,7 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
 
     // Main simulation loop
     // dt_set = 0.001;
-    while (tcurr[sample_id] < tmax) {
+    while (iprint < imax) {
         // Compute rates
         // switch for new algo
 
