@@ -805,8 +805,7 @@ __device__ void initConsts(double *CONSTANTS, double *STATES, double type, doubl
     // CONSTANTS[GNaL], CONSTANTS[GKr]); #endif
 }
 
-__device__ void coupledComputeRates(double TIME, double *CONSTANTS, double *RATES, double *STATES, double *ALGEBRAIC,
-                             int offset, double land_trpn) {
+__device__ void coupledComputeRates(double TIME, double *CONSTANTS, double *RATES, double *STATES, double *ALGEBRAIC, int offset, double land_trpn) {
 
     ALGEBRAIC[(offset * ORd_num_of_algebraic) + Istim] =
         (TIME >= CONSTANTS[(offset * ORd_num_of_constants) + stim_start] &&

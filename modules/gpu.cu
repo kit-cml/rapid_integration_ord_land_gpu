@@ -71,6 +71,21 @@ __global__ void kernel_DrugSimulation_postpro(double *d_ic50, double *d_cvar, do
                             dt_for_each_sample, thread_id, sample_size, temp_result, cipa_result, p_param);
 }
 
+__device__ int ceiling(double num) {
+    int intPart = (int)num;
+    // If the number is already an integer, return it
+    if (num == (double)intPart) {
+        return intPart;
+    }
+    // If the number is positive, return the integer part + 1
+    if (num > 0) {
+        return intPart + 1;
+    }
+    // If the number is negative, return the integer part
+    return intPart;
+}
+
+
 /**
  * @brief Runs a single drug simulation on the GPU for a given sample.
  *
@@ -123,10 +138,18 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
 
     //writing and loops
     float dtw = p_param->dtw;
-    double t_max = (double) p_param->pace_max * d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
+    double t_max = p_param->pace_max * d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
     double next_write_time = t_max - d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
-    int imax = int((t_max - next_write_time) / dtw) + 1;// + ((int(t_max) - int(next_write_time)) % int(dtw) == 0 ? 0 : 1);
+    int imax = p_param->pace_max;
+    // int imax = int((t_max - next_write_time) / dtw) + 1;// + ((int(t_max) - int(next_write_time)) % int(dtw) == 0 ? 0 : 1);
     int iprint = 0;
+    double dt_set_mech;
+    double dt_mech;
+    double tcurr_mech;
+    bool forward_euler_only = 0;
+    int mech_jump;
+    double max_dt = 1.0;
+    double min_dt = 0.0001;
 
     // Simulation variables
     bool is_peak = false;
@@ -136,15 +159,6 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
     const unsigned short pace_max = p_param->pace_max;
     double dt_set;
     double tmax = pace_max * d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
-
-    double dt_set_mech;
-    double dt_mech;
-    double tcurr_mech;
-    bool forward_euler_only = 0;
-    double next_write_time = tmax - d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
-    int mech_jump;
-    double max_dt = 1.0;
-    double min_dt = 0.0001;
 
     int cipa_datapoint = 0;
     unsigned short pace_count = 0;
@@ -174,9 +188,11 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
     while (iprint < imax) {
         // Compute rates
         // switch for new algo
-
+        printf("iprint: %d imax: %d\n",iprint,imax);
         land_computeRates(tcurr[sample_id], d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, d_mec_ALGEBRAIC, y, sample_id);
+        printf("compute rates land\n");
         coupledComputeRates(tcurr[sample_id], d_CONSTANTS, d_RATES, d_STATES, d_ALGEBRAIC, sample_id, d_mec_RATES[TRPN + (sample_id * Land_num_of_rates)]);
+        printf("compute rates ord\n");
         
         // Set time step (adaptive dt)
         //NOTE: Disabled in Margara
@@ -187,10 +203,12 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
             dt[sample_id] = max_dt;
           } else {
         dt_set = set_time_step(tcurr[sample_id], time_point, max_time_step, d_CONSTANTS, d_RATES, d_STATES, d_ALGEBRAIC, sample_id);
+        printf("dt set\n");
         }
         
         if (tcurr[sample_id] + dt[sample_id] >= next_write_time){
         dt[sample_id] = next_write_time - tcurr[sample_id];
+        printf("if tcurr\n");
         }
 
         // if (forward_euler_only == 1){
@@ -200,70 +218,77 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
         // }
 
         solveAnalytical(d_CONSTANTS, d_STATES, d_ALGEBRAIC, d_RATES, dt[sample_id], sample_id);
+        printf("solve analytical ord\n");
 
         if (dt[sample_id] >= min_dt){
           dt_mech = min_dt;
+          printf("dt mech = min_dt\n");
         } else {
           dt_mech = dt[sample_id];
+          printf("dt mech = dt\n");
         }
+
         tcurr_mech = tcurr[sample_id];
         if (dt[sample_id] > 0 && dt_mech > 0){
-          mech_jump = std::ceil(dt[sample_id]/dt_mech);
+          mech_jump = ceiling(dt[sample_id]/dt_mech);
+          printf("mech_jump = %d\n",mech_jump);
           for (int i_jump = 0; i_jump < mech_jump; i_jump++){
             if (tcurr_mech + dt_mech >= tcurr[sample_id] + dt[sample_id]){
               dt_mech = tcurr[sample_id] + dt[sample_id] - tcurr_mech; 
             }
-            land_solveEuler(dt[sample_id], tcurr[sample_id], d_STATES[cai + (sample_id * ORd_num_of_states)] * 1000., d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, sample_id);
+            land_solveEuler(dt_mech, tcurr_mech, d_STATES[cai + (sample_id * ORd_num_of_states)] * 1000., d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, sample_id);
+            printf("solver land\n");
             // For next i_jump
             tcurr_mech = tcurr_mech + dt_mech;
             // p_mech->CONSTANTS[Cai] = p_mech->CONSTANTS[Cai] + cai_rates*dt_mech;
-            land_computeRates(tcurr[sample_id], d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, d_mec_ALGEBRAIC, y, sample_id);
+            land_computeRates(tcurr_mech, d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, d_mec_ALGEBRAIC, y, sample_id);
+            printf("compute rates land_inside\n");
           }
         }
 
-
+        /* old code is from here*/
         // dt_set = 0.005;
-        // Check if within the same cycle
-        if (floor((tcurr[sample_id] + dt_set) / bcl) == floor(tcurr[sample_id] / bcl)) {
-            dt[sample_id] = dt_set;
-        } else {
-            // Handle end of pacing cycle
-            dt[sample_id] = (floor(tcurr[sample_id] / bcl) + 1) * bcl - tcurr[sample_id];
+        // // // Check if within the same cycle
+        // if (floor((tcurr[sample_id] + dt_set) / bcl) == floor(tcurr[sample_id] / bcl)) {
+        //     dt[sample_id] = dt_set;
+        // } else {
+        //     // // Handle end of pacing cycle
+        //     dt[sample_id] = (floor(tcurr[sample_id] / bcl) + 1) * bcl - tcurr[sample_id];
 
-            // Update temporary results if this is the steepest pace
-            if (temp_result[sample_id].dvmdt_repol > cipa_result[sample_id].dvmdt_repol) {
-                pace_steepest = pace_count;
-                cipa_result[sample_id] = temp_result[sample_id];
-                cipa_result[sample_id].ca_valley = d_STATES[(sample_id * ORd_num_of_states) + cai];
-                cipa_result[sample_id].vm_valley = d_STATES[(sample_id * ORd_num_of_states) + V];
-                is_peak = true;
-                init_states_captured = false;
-            } else {
-                is_peak = false;
-            }
+        //     // // Update temporary results if this is the steepest pace
+        //     if (temp_result[sample_id].dvmdt_repol > cipa_result[sample_id].dvmdt_repol) {
+        //         pace_steepest = pace_count;
+        //         cipa_result[sample_id] = temp_result[sample_id];
+        //         cipa_result[sample_id].ca_valley = d_STATES[(sample_id * ORd_num_of_states) + cai];
+        //         cipa_result[sample_id].vm_valley = d_STATES[(sample_id * ORd_num_of_states) + V];
+        //         is_peak = true;
+        //         init_states_captured = false;
+        //     } else {
+        //         is_peak = false;
+        //     }
 
-            // Reset variables for next pacing cycle
-            t_peak_capture = 0.0;
-            init_result(temp_result[sample_id], d_STATES, sample_id);
-            pace_count++;
-            input_counter = 0;
-            cipa_datapoint = 0;
-            is_eligible_AP = false;
+        //     // Reset variables for next pacing cycle
+        //     t_peak_capture = 0.0;
+        //     init_result(temp_result[sample_id], d_STATES, sample_id);
+        //     pace_count++;
+        //     input_counter = 0;
+        //     cipa_datapoint = 0;
+        //     is_eligible_AP = false;
 
-            // Debug output
-            if (sample_id == 0) {
-                printf("core: %d pace count: %d t: %lf, steepest: %d, dvmdt_repol: %lf, conc: %lf\n", sample_id,
-                       pace_count, tcurr[sample_id], pace_steepest, cipa_result[sample_id].dvmdt_repol, conc);
-            }
-        }
+        //     // Debug output
+        //     if (sample_id == 0) {
+        //         printf("core: %d pace count: %d t: %lf, steepest: %d, dvmdt_repol: %lf, conc: %lf\n", sample_id,
+        //                pace_count, tcurr[sample_id], pace_steepest, cipa_result[sample_id].dvmdt_repol, conc);
+        //     }
+        // }
 
 
 
-        // Solve ODEs analytically
-        solveAnalytical(d_CONSTANTS, d_STATES, d_ALGEBRAIC, d_RATES, dt[sample_id], sample_id);
-        land_solveEuler(dt[sample_id], tcurr[sample_id], d_STATES[cai + (sample_id * ORd_num_of_states)] * 1000., d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, sample_id);
+        // // Solve ODEs analytically
+        //  solveAnalytical(d_CONSTANTS, d_STATES, d_ALGEBRAIC, d_RATES, dt[sample_id], sample_id);
+        //  land_solveEuler(dt[sample_id], tcurr[sample_id], d_STATES[cai + (sample_id * ORd_num_of_states)] * 1000., d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, sample_id);
 
-        // Perform checks in the last few pacing cycles
+        // // Perform checks in the last few pacing cycles
         if (pace_count >= pace_max - last_drug_check_pace) {
             if (tcurr[sample_id] > ((d_CONSTANTS[(sample_id * ORd_num_of_constants) + BCL] * pace_count) +
                                     (d_CONSTANTS[(sample_id * ORd_num_of_constants) + stim_start] + 2)) &&
@@ -307,7 +332,12 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
                 cipa_datapoint++;
             }
         }
-        tcurr[sample_id] += dt[sample_id];
+         /*to here*/
+
+        // tcurr[sample_id] += dt[sample_id];
+        next_write_time += dtw;
+        printf("update next write time\n\n");
+        iprint += 1;
     }
 }
 
