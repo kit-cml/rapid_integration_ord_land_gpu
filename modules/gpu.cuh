@@ -64,9 +64,9 @@ __global__ void kernel_DrugSimulation(double *d_ic50, double *d_cvar, double *d_
  * @param p_param Pointer to parameters on the device.
  */
 __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_conc, double *d_CONSTANTS,
-                                      double *d_STATES, double *d_RATES, double *d_ALGEBRAIC, double *d_mec_CONSTANTS,
-                                      double *d_mec_RATES, double *d_mec_STATES, double *d_mec_ALGEBRAIC,
-                                      double *d_STATES_RESULT, double *tcurr, double *dt, unsigned short sample_id,
+                                      double *d_STATES, double *d_RATES, double *d_ALGEBRAIC, double *d_STATES_RESULT,
+                                      double *d_mec_CONSTANTS, double *d_mec_RATES, double *d_mec_STATES,
+                                      double *d_mec_ALGEBRAIC, double *tcurr, double *dt, double *dt_mech, double *tcurr_mech, unsigned short sample_id,
                                       unsigned int sample_size, cipa_t *temp_result, cipa_t *cipa_result,
                                       param_t *p_param);
 
