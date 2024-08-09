@@ -136,30 +136,12 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
     init_result(temp_result[sample_id], d_STATES, sample_id);
     init_result(cipa_result[sample_id], d_STATES, sample_id);
 
-    //writing and loops
-    float dtw = p_param->dtw;
-    double t_max = p_param->pace_max * d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
-    double next_write_time = t_max - d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
-    // int imax = p_param->pace_max;
-    int imax = int((t_max - next_write_time) / dtw) + 1;// + ((int(t_max) - int(next_write_time)) % int(dtw) == 0 ? 0 : 1);
-    int iprint = 0;
-    double dt_set_mech;
-    double dt_mech;
-    double tcurr_mech;
-    bool forward_euler_only = 0;
-    int mech_jump;
-    double max_dt = 1.0;
-    double min_dt = 0.0001;
-
     // Simulation variables
     bool is_peak = false;
     tcurr[sample_id] = 0.0;
     dt[sample_id] = p_param->dt;
     double max_time_step = 0.1, time_point = 25.0;
-    const unsigned short pace_max = p_param->pace_max;
     double dt_set;
-    double tmax = pace_max * d_CONSTANTS[BCL + (sample_id * ORd_num_of_states)];
-
     int cipa_datapoint = 0;
     unsigned short pace_count = 0;
     double t_peak_capture = 0.0;
@@ -167,14 +149,21 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
     bool init_states_captured = false;
     bool is_eligible_AP;
     const double bcl = p_param->bcl;
-    
+    const unsigned short pace_max = p_param->pace_max;
     const unsigned short last_drug_check_pace = p_param->find_steepest_start;
-    
+    double tmax = pace_max * bcl;
     double conc = d_conc;
     double type = p_param->celltype;
     double y[7] = {0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0};
     double epsilon = 10E-14;
     double vm_repol30, vm_repol90;
+    
+    // dt profiling variables
+    double min_dt = 0.002;
+    double max_dt = 0.1; 
+    double dt_mech;
+    double tcurr_mech;
+    int mech_jump;
 
     // Initialize constants and apply drug effects
     initConsts(d_CONSTANTS, d_STATES, type, conc, d_ic50, d_cvar, p_param->is_dutta, p_param->is_cvar, bcl, sample_id);
@@ -232,7 +221,7 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
         // Solve ODEs analytically
         solveAnalytical(d_CONSTANTS, d_STATES, d_ALGEBRAIC, d_RATES, dt[sample_id], sample_id);
 
-        // Solve Land2016
+       // Solve Land2016 with dt profiling
         if (dt[sample_id] >= min_dt){
           dt_mech = min_dt;
         } else {
@@ -240,7 +229,7 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
         }
         tcurr_mech = tcurr[sample_id];
 
-        if (dt > 0 && dt_mech > 0){
+        if (dt[sample_id] > 0 && dt_mech > 0){
         mech_jump = plafon(dt[sample_id]/dt_mech);
         for (int i_jump = 0; i_jump < mech_jump; i_jump++){
           if (tcurr_mech + dt_mech >= tcurr[sample_id] + dt[sample_id]){
@@ -252,7 +241,8 @@ __device__ void kernel_DoDrugSim_init(double *d_ic50, double *d_cvar, double d_c
           coupledComputeRates(tcurr_mech, d_CONSTANTS, d_RATES, d_STATES, d_ALGEBRAIC, sample_id, d_mec_RATES[TRPN + (sample_id * Land_num_of_rates)]);
         }
       }
-        
+      // dt profiling ends, old version: 
+      // land_solveEuler(dt[sample_id], tcurr[sample_id], d_STATES[cai + (sample_id * ORd_num_of_states)] * 1000., d_mec_CONSTANTS, d_mec_RATES, d_mec_STATES, sample_id);
 
         // Perform checks in the last few pacing cycles
         if (pace_count >= pace_max - last_drug_check_pace) {
